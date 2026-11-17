@@ -8,7 +8,7 @@ func Install(name string) error {
 		return fmt.Errorf("repo creation failed: %v", err)
 	}
 
-	pkgs := repo.Find(name)
+	pkgs := repo.FindByName(name)
 	for _, pkg := range pkgs {
 		fmt.Printf("Package: %v\n", pkg)
 	}

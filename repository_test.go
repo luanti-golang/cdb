@@ -23,7 +23,7 @@ func TestOfflineRepositoryNotEmpty(t *testing.T) {
 func TestOfflineRepositoryFind(t *testing.T) {
 	repo := offlineRepo(t)
 
-	found := repo.Find("repixture")
+	found := repo.FindByName("repixture")
 	if len(found) != 1 {
 		t.Fatalf("Find(repixture) returned %d packages, want 1", len(found))
 	}
@@ -37,7 +37,7 @@ func TestOfflineRepositoryFind(t *testing.T) {
 }
 
 func TestOfflineRepositoryNullRepo(t *testing.T) {
-	found := offlineRepo(t).Find("realism_512")
+	found := offlineRepo(t).FindByName("realism_512")
 	if len(found) != 1 {
 		t.Fatalf("Find(realism_512) returned %d packages, want 1", len(found))
 	}
@@ -47,8 +47,23 @@ func TestOfflineRepositoryNullRepo(t *testing.T) {
 }
 
 func TestOfflineRepositoryUnknown(t *testing.T) {
-	if got := offlineRepo(t).Find("does_not_exist_xyz"); len(got) != 0 {
+	if got := offlineRepo(t).FindByName("does_not_exist_xyz"); len(got) != 0 {
 		t.Errorf("Find(unknown) = %v, want empty", got)
+	}
+}
+
+func TestOfflineRepositoryFindByKey(t *testing.T) {
+	repo := offlineRepo(t)
+
+	pkg, ok := repo.Find("Wuzzy/repixture")
+	if !ok || pkg.Name != "repixture" {
+		t.Fatalf("Find(Wuzzy/repixture) = %v, %v", pkg, ok)
+	}
+	if _, ok := repo.Find("repixture"); ok {
+		t.Error("bare name must not be a key")
+	}
+	if _, ok := repo.Find("Nobody/repixture"); ok {
+		t.Error("wrong author must not match")
 	}
 }
 
@@ -56,28 +71,29 @@ func TestOfflineRepositoryAliasLookup(t *testing.T) {
 	repo := offlineRepo(t)
 
 	// happy_land has the alias "a-zA0-02A/gamingoont_happy_land"
-	byName := repo.Find("happy_land")
-	byAlias := repo.Find("gamingoont_happy_land")
-	if len(byName) != 1 || len(byAlias) != 1 {
-		t.Fatalf("got %d by name, %d by alias, want 1 each", len(byName), len(byAlias))
+	var byName *VCSPackage
+	for _, p := range repo.FindByName("happy_land") {
+		byName = p
 	}
-	if byName[0] != byAlias[0] {
-		t.Error("name and alias lookups returned different packages")
+	byAlias, ok := repo.Find("a-zA0-02A/gamingoont_happy_land")
+	if byName == nil || !ok || byName != byAlias {
+		t.Fatalf("alias lookup mismatch: %v vs %v (ok=%v)", byName, byAlias, ok)
 	}
 }
 
 func TestOfflineRepositoryDuplicateNames(t *testing.T) {
-	// several packages share the name "apartment"
-	found := offlineRepo(t).Find("apartment")
+	// several authors publish a package named "apartment"
+	found := offlineRepo(t).FindByName("apartment")
 	if len(found) < 2 {
 		t.Fatalf("Find(apartment) returned %d packages, want >= 2", len(found))
 	}
-	seen := map[*VCSPackage]bool{}
-	for _, p := range found {
-		if seen[p] {
-			t.Error("package listed twice")
+	for i, p := range found {
+		if i > 0 && found[i-1].Author > p.Author {
+			t.Error("results not ordered by author")
 		}
-		seen[p] = true
+		if got, ok := offlineRepo(t).Find(p.Author + "/" + p.Name); !ok || got.Author != p.Author {
+			t.Errorf("Find(%s/%s) failed", p.Author, p.Name)
+		}
 	}
 }
 
@@ -88,22 +104,25 @@ func TestOfflineRepositoryContainsAllPackages(t *testing.T) {
 	}
 	repo := offlineRepo(t)
 	for _, want := range all {
-		ok := false
-		for _, got := range repo.Find(want.Name) {
-			if got.Author == want.Author && got.Name == want.Name {
-				ok = true
-				break
-			}
-		}
-		if !ok {
+		got, ok := repo.Find(want.Author + "/" + want.Name)
+		if !ok || got.Name != want.Name {
 			t.Errorf("package %s/%s missing from repository", want.Author, want.Name)
 		}
 	}
 }
 
+func TestRealKeysTakePrecedenceOverAliases(t *testing.T) {
+	real := &VCSPackage{Author: "a", Name: "x"}
+	other := &VCSPackage{Author: "b", Name: "y", Aliases: []string{"a/x"}}
+	repo := newPackageRepository([]*VCSPackage{other, real})
+	if got, _ := repo.Find("a/x"); got != real {
+		t.Error("alias overrode a real package key")
+	}
+}
+
 func TestNewPackageRepositorySkipsInvalid(t *testing.T) {
-	repo := newPackageRepository([]*VCSPackage{nil, {Name: ""}, {Name: "a"}})
-	if len(repo.packages) != 1 || len(repo.Find("a")) != 1 {
+	repo := newPackageRepository([]*VCSPackage{nil, {Author: "u"}, {Author: "u", Name: "a"}})
+	if _, ok := repo.Find("u/a"); !ok || len(repo.packages) != 1 {
 		t.Errorf("unexpected packages: %v", repo.packages)
 	}
 }

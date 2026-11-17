@@ -4,15 +4,15 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"strings"
+	"sort"
 )
 
 //go:embed offline-packages.json
 var offlinePackagesJSON []byte
 
 type PackageRepository struct {
-	// map of package-name to possible package matches
-	packages map[string][]*VCSPackage
+	// map of "{author}/{name}" to package
+	packages map[string]*VCSPackage
 }
 
 // CreateRepository creates an online repository and falls back to the
@@ -48,37 +48,55 @@ func CreateOfflineRepository() (*PackageRepository, error) {
 	return newPackageRepository(packages), nil
 }
 
-// newPackageRepository populates the name -> packages map. Packages are indexed
-// by their name and by the name part of each alias ("author/name"), so lookups
-// of renamed packages still match.
+// newPackageRepository populates the "{author}/{name}" -> package map. Aliases
+// ("author/name") are indexed as additional keys, so renamed packages still
+// resolve. Real package keys always take precedence over aliases.
 func newPackageRepository(packages []*VCSPackage) *PackageRepository {
-	repo := &PackageRepository{packages: make(map[string][]*VCSPackage, len(packages))}
+	repo := &PackageRepository{packages: make(map[string]*VCSPackage, len(packages))}
+	for _, pkg := range packages {
+		if pkg != nil && pkg.Name != "" {
+			repo.add(packageKey(pkg.Author, pkg.Name), pkg)
+		}
+	}
 	for _, pkg := range packages {
 		if pkg == nil {
 			continue
 		}
-		repo.add(pkg.Name, pkg)
 		for _, alias := range pkg.Aliases {
-			name := alias[strings.LastIndex(alias, "/")+1:]
-			repo.add(name, pkg)
+			repo.add(alias, pkg)
 		}
 	}
 	return repo
 }
 
-func (r *PackageRepository) add(name string, pkg *VCSPackage) {
-	if name == "" {
-		return
-	}
-	for _, existing := range r.packages[name] {
-		if existing == pkg {
-			return
-		}
-	}
-	r.packages[name] = append(r.packages[name], pkg)
+func packageKey(author, name string) string {
+	return author + "/" + name
 }
 
-// Find returns all packages matching the given name.
-func (r *PackageRepository) Find(name string) []*VCSPackage {
-	return r.packages[name]
+// add registers pkg under key unless the key is already taken.
+func (r *PackageRepository) add(key string, pkg *VCSPackage) {
+	if _, exists := r.packages[key]; !exists {
+		r.packages[key] = pkg
+	}
+}
+
+// Find returns the package with the given "{author}/{name}" key (or alias).
+func (r *PackageRepository) Find(key string) (*VCSPackage, bool) {
+	pkg, ok := r.packages[key]
+	return pkg, ok
+}
+
+// FindByName returns all packages with the given name, regardless of author,
+// ordered by author.
+func (r *PackageRepository) FindByName(name string) []*VCSPackage {
+	var found []*VCSPackage
+	seen := map[*VCSPackage]bool{}
+	for _, pkg := range r.packages {
+		if pkg.Name == name && !seen[pkg] {
+			seen[pkg] = true
+			found = append(found, pkg)
+		}
+	}
+	sort.Slice(found, func(i, j int) bool { return found[i].Author < found[j].Author })
+	return found
 }
