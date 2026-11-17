@@ -1,6 +1,11 @@
 package main
 
-import "flag"
+import (
+	"cdb"
+	"flag"
+	"fmt"
+	"os"
+)
 
 func main() {
 	helpFlag := flag.Bool("help", false, "shows the help")
@@ -13,6 +18,15 @@ func main() {
 		return
 	}
 
+	var err error
 	if *installFlag {
+		err = cdb.Install(*packageFlag)
+	} else {
+		flag.Usage()
+		return
+	}
+	if err != nil {
+		fmt.Printf("Install failed: %v\n", err)
+		os.Exit(1)
 	}
 }
